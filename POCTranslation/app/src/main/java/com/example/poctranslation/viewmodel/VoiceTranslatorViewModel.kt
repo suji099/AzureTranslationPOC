@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioManager
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
@@ -34,6 +35,7 @@ import retrofit2.Callback
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.util.Locale
 
 class VoiceTranslatorViewModel(application: Application) : ViewModel() {
     private val context = application.applicationContext
@@ -176,16 +178,28 @@ class VoiceTranslatorViewModel(application: Application) : ViewModel() {
             else -> "en"
         }
     }
+    @SuppressLint("MissingPermission")
     fun speakTranslatedTextOverBluetooth(text: String) {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val bluetoothAdapter = bluetoothManager.adapter
+
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             Log.e("Bluetooth", "Missing BLUETOOTH_CONNECT permission!")
             return
         }
-        val connectedDevices = bluetoothAdapter?.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
-            @SuppressLint("MissingPermission")
+
+        // First: Check A2DP connection (Bluetooth speaker)
+        val isA2dpOn = audioManager.isBluetoothA2dpOn
+
+        if (isA2dpOn) {
+            Log.d("Bluetooth", "Bluetooth speaker connected. Using media audio.")
+            speakWithTTS(text, AudioAttributes.USAGE_MEDIA)
+            return
+        }
+
+        // Next: Check SCO connection (Bluetooth headset)
+        bluetoothAdapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
             override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
                 if (profile == BluetoothProfile.HEADSET) {
                     val bluetoothHeadset = proxy as BluetoothHeadset?
@@ -194,14 +208,15 @@ class VoiceTranslatorViewModel(application: Application) : ViewModel() {
                     if (connectedDevices.isNotEmpty()) {
                         Log.d("Bluetooth", "Bluetooth headset is connected.")
 
-                        // Set audio routing to Bluetooth
+                        // Route through SCO (headset)
                         audioManager.mode = AudioManager.MODE_IN_CALL
-                        audioManager.isBluetoothScoOn = true
                         audioManager.startBluetoothSco()
+                        audioManager.isBluetoothScoOn = true
 
-                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+                        speakWithTTS(text, AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     } else {
                         Log.e("Bluetooth", "No Bluetooth headset connected!")
+                        speakWithTTS(text, AudioAttributes.USAGE_MEDIA)
                     }
                 }
             }
@@ -210,7 +225,31 @@ class VoiceTranslatorViewModel(application: Application) : ViewModel() {
                 Log.d("Bluetooth", "Bluetooth headset disconnected.")
             }
         }, BluetoothProfile.HEADSET)
-        }
+    }
 
+    // Helper method to speak using TTS with custom audio attributes
+    private fun speakWithTTS(text: String, usage: Int) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager.startBluetoothSco()
+        audioManager.isBluetoothScoOn = true
+        val tts = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.US
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(usage)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                tts?.setAudioAttributes(audioAttributes)
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tts1")
+            }
+        }
+    }
+    fun swapLanguages() {
+        val currentSource = _sourceLanguage.value
+        val currentTarget = _targetLanguage.value
+        _sourceLanguage.value = currentTarget
+        _targetLanguage.value = currentSource
+    }
 
 }
