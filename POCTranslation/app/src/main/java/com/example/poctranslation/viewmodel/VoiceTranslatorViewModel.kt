@@ -8,11 +8,10 @@ import android.bluetooth.BluetoothHeadset
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioManager
-import android.speech.RecognizerIntent
+import android.os.Build
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -29,7 +28,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody
-import okhttp3.ResponseBody
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -227,24 +225,37 @@ class VoiceTranslatorViewModel(application: Application) : ViewModel() {
         }, BluetoothProfile.HEADSET)
     }
 
-    // Helper method to speak using TTS with custom audio attributes
     private fun speakWithTTS(text: String, usage: Int) {
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        audioManager.startBluetoothSco()
-        audioManager.isBluetoothScoOn = true
-        val tts = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.US
-                val audioAttributes = AudioAttributes.Builder()
-                    .setUsage(usage)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-                tts?.setAudioAttributes(audioAttributes)
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tts1")
-            }
+        if (tts == null) {
+            Log.e("TTS", "TTS not initialized")
+            return
         }
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val isBelowAndroid12 = Build.VERSION.SDK_INT < Build.VERSION_CODES.S
+
+        if (isBelowAndroid12) {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.startBluetoothSco()
+            audioManager.isBluetoothScoOn = true
+        }
+
+        // Set language for TTS (You can change this if needed based on the target language)
+        tts?.language = Locale.US
+
+        // Set AudioAttributes based on usage
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(usage)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        tts?.setAudioAttributes(audioAttributes)
+
+        // Speak the text
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tts1")
+
+
     }
+
+
     fun swapLanguages() {
         val currentSource = _sourceLanguage.value
         val currentTarget = _targetLanguage.value
